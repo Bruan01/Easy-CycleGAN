@@ -27,7 +27,7 @@ class Horse2ZebraDataset(Dataset):
         self.transform = trans_forms
 
         # 查看数据集目录
-        self.zebra_images = os.listdir(root_zebra)
+        self.zebra_images = os.listdir(root_zebra) # 打开文件夹
         self.horse_images = os.listdir(root_horse)
         # 由于数据集长度不一样，这里选要做出处理（选择上界）
         self.length_dataset = max(len(self.zebra_images), len(self.horse_images))  # 1000 > 1500(^)

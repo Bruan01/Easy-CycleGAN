@@ -15,16 +15,16 @@ from albumentations.pytorch import ToTensorV2
 
 # 超参数
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-TRAIN_DIR = "data/train"
-VAL_DIR = "data/val"
+TRAIN_DIR = "dataset/monet2photo/train"
+VAL_DIR = "dataset/monet2photo/test"
 BATCH_SIZE = 1
 LEARNING_RATE = 2e-4
 LAMBDA_IDENTITY = 0.0
 LAMBDA_CYCLE = 10
 NUM_WORKERS = 4
-NUM_EPOCH = 200
-LOAD_MODEL = True
-SAVE_MODEL = True
+NUM_EPOCHS = 200
+LOAD_MODEL = False
+SAVE_MODEL = False
 CHECKPOINT_GEN_H = "genh.pth.tar"
 CHECKPOINT_GEN_Z = "genz.pth.tar"
 CHECKPOINT_CRITIC_H = "critich.pth.tra"

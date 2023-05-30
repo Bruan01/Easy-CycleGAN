@@ -20,7 +20,7 @@ from model.discriminator_model import Discriminator
 from model.genorator_model import Generator
 
 
-def train_fn(disc_H, disc_Z, gen_Z, gen_H, loader, opt_disc, opt_ge, l1, mse, d_scaler, g_scaler):
+def train_fn(disc_H, disc_Z, gen_Z, gen_H, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler):
     # 一次训练的主要过程
     loop = tqdm(loader, leave=True)
     for idx, (zebra, horse) in enumerate(loop):
@@ -50,7 +50,7 @@ def train_fn(disc_H, disc_Z, gen_Z, gen_H, loader, opt_disc, opt_ge, l1, mse, d_
             D_Z_LOSS = D_Z_real_loss + D_Z_fake_loss
 
             # 3.判别器总损失
-            D_LOSS = (D_H_LOSS + D_Z_LOSS)/2
+            D_LOSS = (D_H_LOSS + D_Z_LOSS) / 2
 
         # 优化器梯度清零
         opt_disc.zero_grad()
@@ -60,7 +60,43 @@ def train_fn(disc_H, disc_Z, gen_Z, gen_H, loader, opt_disc, opt_ge, l1, mse, d_
 
         # 训练生成器 gen_H 和 gen_Z
         with torch.cuda.amp.autocast():  # 自动化浮点数，节省内存
-            D_H_fake = disc_H
+            D_H_fake = disc_H(fake_horse)  # 鉴别假马 从生成器的角度说，就是要欺骗判别器使得接近1
+            D_Z_fake = disc_Z(fake_zebra)  # 鉴别假斑马 从生成器的角度说，就是要欺骗判别器使得接近1
+            loss_G_H = mse(D_H_fake, torch.ones_like(D_H_fake))
+            loss_G_Z = mse(D_Z_fake, torch.ones_like(D_Z_fake))
+
+            # cycle loss 循环损失
+            cycle_zebra = gen_Z(fake_horse)
+            cycle_horse = gen_H(fake_zebra)
+            cycle_zebra_loss = l1(zebra, cycle_zebra)
+            cycle_horse_loss = l1(horse, cycle_horse)
+
+            # identity 自身损失
+            identity_zebra = gen_Z(zebra)
+            identity_horse = gen_H(horse)
+            identity_zebra_loss = l1(zebra, identity_zebra)
+            identity_horse_loss = l1(horse, identity_horse)
+
+            # 全部损失
+            G_loss = (
+                    loss_G_Z
+                    + loss_G_H
+                    + cycle_zebra_loss * config.LAMBDA_CYCLE
+                    + cycle_horse_loss * config.LAMBDA_CYCLE
+                    + identity_zebra_loss * config.LAMBDA_IDENTITY
+                    + identity_horse_loss * config.LAMBDA_IDENTITY
+            )
+
+        opt_gen.zero_grad()
+        g_scaler.scale(G_loss).backward()
+        g_scaler.step(opt_gen)
+        g_scaler.update()
+
+        # 保存图像
+        if idx % 200 == 0:
+            save_image(fake_horse*0.5+0.5,f"saved_images/horse_{idx}.png")
+            save_image(fake_zebra*0.5+0.5,f"saved_images/zebra_{idx}.png")
+
 
 # 重中之重Loss过程
 def main():
@@ -101,7 +137,7 @@ def main():
             checkpoint_file=config.CHECKPOINT_GEN_Z, model=gen_Z, optimizer=opt_gen, lr=config.LEARNING_RATE
         )
     # 导入数据集
-    train_dataset = Horse2ZebraDataset(root_horse=config.TRAIN_DIR + "/horses", root_zebra=config.TRAIN_DIR + "/zebras",
+    train_dataset = Horse2ZebraDataset(root_horse=config.TRAIN_DIR + "/trainA", root_zebra=config.TRAIN_DIR + "/trainB",
                                        trans_forms=config.transforms)
     loader = DataLoader(
         train_dataset,
