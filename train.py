@@ -6,6 +6,9 @@
 
 '''
 import torch
+from openpyxl import load_workbook
+from openpyxl import Workbook
+
 from dataset.dataset import Horse2ZebraDataset
 import sys
 from utils import save_checkpoint, load_checkpoint
@@ -20,7 +23,7 @@ from model.discriminator_model import Discriminator
 from model.genorator_model import Generator
 
 
-def train_fn(disc_H, disc_Z, gen_Z, gen_H, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler):
+def train_fn(disc_H, disc_Z, gen_Z, gen_H, loader, opt_disc, opt_gen, l1, mse, d_scaler, g_scaler, last_row, epoch, ws):
     # 一次训练的主要过程
     loop = tqdm(loader, leave=True)
     for idx, (zebra, horse) in enumerate(loop):
@@ -52,6 +55,10 @@ def train_fn(disc_H, disc_Z, gen_Z, gen_H, loader, opt_disc, opt_gen, l1, mse, d
             # 3.判别器总损失
             D_LOSS = (D_H_LOSS + D_Z_LOSS) / 2
 
+            ws.cell(row=last_row, column=2, value=D_H_LOSS.item())
+            ws.cell(row=last_row, column=3, value=D_Z_LOSS.item())
+            ws.cell(row=last_row, column=4, value=D_LOSS.item())
+
         # 优化器梯度清零
         opt_disc.zero_grad()
         d_scaler.scale(D_LOSS).backward()
@@ -71,11 +78,11 @@ def train_fn(disc_H, disc_Z, gen_Z, gen_H, loader, opt_disc, opt_gen, l1, mse, d
             cycle_zebra_loss = l1(zebra, cycle_zebra)
             cycle_horse_loss = l1(horse, cycle_horse)
 
-            # identity 自身损失
-            identity_zebra = gen_Z(zebra)
-            identity_horse = gen_H(horse)
-            identity_zebra_loss = l1(zebra, identity_zebra)
-            identity_horse_loss = l1(horse, identity_horse)
+            # identity 自身损失  为了提高速度
+            # identity_zebra = gen_Z(zebra)
+            # identity_horse = gen_H(horse)
+            # identity_zebra_loss = l1(zebra, identity_zebra)
+            # identity_horse_loss = l1(horse, identity_horse)
 
             # 全部损失
             G_loss = (
@@ -83,9 +90,16 @@ def train_fn(disc_H, disc_Z, gen_Z, gen_H, loader, opt_disc, opt_gen, l1, mse, d
                     + loss_G_H
                     + cycle_zebra_loss * config.LAMBDA_CYCLE
                     + cycle_horse_loss * config.LAMBDA_CYCLE
-                    + identity_zebra_loss * config.LAMBDA_IDENTITY
-                    + identity_horse_loss * config.LAMBDA_IDENTITY
+                # + identity_zebra_loss * LAMBDA_IDENTITY
+                # + identity_horse_loss * LAMBDA_IDENTITY
             )
+
+            ws.cell(row=last_row, column=5, value=loss_G_Z.item())
+            ws.cell(row=last_row, column=6, value=loss_G_H.item())
+            ws.cell(row=last_row, column=7, value=cycle_zebra_loss.item() * config.LAMBDA_CYCLE)
+            ws.cell(row=last_row, column=8, value=cycle_horse_loss.item() * config.LAMBDA_CYCLE)
+            # ws.cell(row=row, column=8, value=identity_zebra_loss.item() * LAMBDA_IDENTITY)
+            # ws.cell(row=row, column=9, value=identity_horse_loss.item() * LAMBDA_IDENTITY)
 
         opt_gen.zero_grad()
         g_scaler.scale(G_loss).backward()
@@ -94,12 +108,35 @@ def train_fn(disc_H, disc_Z, gen_Z, gen_H, loader, opt_disc, opt_gen, l1, mse, d
 
         # 保存图像
         if idx % 200 == 0:
-            save_image(fake_horse*0.5+0.5,f"saved_images/horse_{idx}.png")
-            save_image(fake_zebra*0.5+0.5,f"saved_images/zebra_{idx}.png")
+            save_image(fake_horse * 0.5 + 0.5,
+                       f"saved_images/scenery_epoch_{epoch}_{idx}.png")
+            save_image(fake_zebra * 0.5 + 0.5,
+                       f"saved_images/painting_epoch_{epoch}_{idx}.png")
 
 
 # 重中之重Loss过程
 def main():
+    # 创建或加载现有的Excel文件
+    try:
+        wb = load_workbook('saved_loss/loss_sum.xlsx')
+    except FileNotFoundError:
+        wb = Workbook()
+    # 选择要写入数据的工作表（这里选择第一个工作表）
+    ws = wb.active
+    # 首行特殊处理
+    ws.cell(row=1, column=1, value="epoch")
+    ws.cell(row=1, column=2, value="D_H_LOSS")
+    ws.cell(row=1, column=3, value="D_Z_LOSS")
+    ws.cell(row=1, column=4, value="D_LOSS")
+    ws.cell(row=1, column=5, value="loss_G_Z")
+    ws.cell(row=1, column=6, value="loss_G_H")
+    ws.cell(row=1, column=7, value="cycle_zebra_loss * LAMBDA_CYCLE")
+    ws.cell(row=1, column=8, value="cycle_horse_loss * LAMBDA_CYCLE")
+    # ws.cell(row=row, column=8, value="identity_zebra_loss * LAMBDA_IDENTITY")
+    # ws.cell(row=row, column=9, value="identity_horse_loss * LAMBDA_IDENTITY")
+    # 获取当前工作表的最后一行索引
+    last_row = ws.max_row
+
     # 初始化，输入三围图像
     disc_H = Discriminator(in_channels=3).to(config.DEVICE)  # 网络作用：鉴别是不是真马
     disc_Z = Discriminator(in_channels=3).to(config.DEVICE)  # 网络作用：鉴别是不是真斑马
@@ -154,7 +191,11 @@ def main():
     # 开始轮次训练
     for epoch in range(config.NUM_EPOCHS):
         # 训练主要过程
-        train_fn(disc_H, disc_Z, gen_Z, gen_H, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler)
+        train_fn(disc_H, disc_Z, gen_Z, gen_H, loader, opt_disc, opt_gen, L1, mse, d_scaler, g_scaler,
+                 epoch + 1, epoch + 1, ws)
+
+        # 保存数据
+        wb.save('saved_loss/loss_sum.xlsx')
         if config.SAVE_MODEL:
             save_checkpoint(gen_H, opt_gen, filename=config.CHECKPOINT_GEN_H)
             save_checkpoint(gen_Z, opt_gen, filename=config.CHECKPOINT_GEN_Z)
